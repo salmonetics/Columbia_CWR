@@ -1,0 +1,868 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r,echo=F}
+library(tidyverse)
+library(lubridate)
+library(ggExtra)
+library(scales)
+library(cowplot)
+library(ggridges)
+```
+
+```{r,echo=F}
+all <- read.csv("AllFirstLastDetections.csv",stringsAsFactors=F)
+all <- all %>% select(1,3,5,6,8,9,10,11,12,13,14)
+names(all) <- c("tag_id","species","run","rtype","subbasin_code","subbasin","rel_site","rel_date","obs_site","date1","date2")
+all$basin_code <- substring(as.character(all$subbasin_code),1,6)
+```
+
+
+
+```{r,echo=F}
+all$rel_date <- mdy(all$rel_date)
+all$date1 <- mdy_hms(all$date1)
+all$date2 <- mdy_hms(all$date2)
+all <- all %>% filter(year(date1) == year(date2))
+```
+
+```{r,echo=F}
+basins <- read.csv("basins.csv",stringsAsFactors=F)
+basins$basin_code <- as.character(basins$basin_code)
+all <- merge(all,basins)
+```
+
+```{r,echo=F}
+splitDetections <- function(df,spec){
+df <- filter(df, species==spec)
+df.first <- select(df,tag_id,species,run,rtype,basin,subbasin,rel_site,rel_date,obs_site,date1)
+df.first$date <- df.first$date1
+df.first$date1 <- NULL
+df.last <- select(df,tag_id,species,run,rtype,basin,subbasin,rel_site,rel_date,obs_site,date2)
+df.last$date <- df.last$date2
+df.last$date2 <- NULL
+df <- rbind(df.first,df.last) %>% arrange(tag_id,date)
+return(df)
+}
+```
+
+```{r,echo=F}
+getNext <- function(field){
+  nxt <- c(field[2:length(field)],"NA")
+  return(nxt)
+}
+getDetectionTimes <- function(df3){
+  df3 <- arrange(df3,tag_id,date)
+  df3$next.tag_id <- getNext(df3$tag_id)
+  df3$next.obs_site <- getNext(df3$obs_site)
+  #I really don't know why the below line is needed
+  df3$next.date <- getNext(df3$date) + hours(7)
+  df3$dtime <- as.numeric(difftime(as.POSIXct(as.POSIXlt(df3$next.date)),as.POSIXct(as.POSIXlt(df3$date)),units="days"))
+  df3$isLast <- ifelse(df3$tag_id != df3$next.tag_id,T,F)
+  #df4 <- filter(df3,tag_id == next.tag_id)
+  return(df3)
+}
+
+getBONParams <- function(year){
+  BON <- read.csv("BONdamdata.csv",stringsAsFactors=F)
+  BON$date <- ymd(paste(BON$year,BON$mm.dd,sep="-")) 
+  BON <- BON %>% filter(!is.na(date)) %>% filter(year == year)
+  BON.gaspct <- filter(BON,parameter=="gaspct") %>% mutate(gaspct=value) %>% select(date,gaspct)
+  BON.outflow <- filter(BON,parameter=="outflow") %>% mutate(outflow=value) %>% select(date,location,outflow)
+  BON.spillpct <- filter(BON,parameter=="spillpct") %>% mutate(spillpct=value) %>% select(date,spillpct)
+  BON.elev <- filter(BON,parameter=="elev") %>% mutate(elev=value) %>% select(date,elev)
+  BON.tempscr <- filter(BON,parameter=="tempscr") %>% mutate(tempscr=value) %>% select(date,tempscr)
+  BON.tempc <- filter(BON,parameter=="tempc") %>% mutate(tempc=value) %>% select(date,tempc)
+  df <- BON.outflow %>% merge(BON.spillpct) %>% merge(BON.tempc) %>% merge(BON.tempscr) %>% merge(BON.gaspct)
+  df$temp <- ifelse(is.na(df$tempc),df$tempsc,df$tempc)
+  return(df)
+}
+
+##############################
+plotDelays <- function(data,damdata,year,sites1,sites2,title,xlab,ylab,limits=list(startmonth=6,endmonth=11),mindays=6){
+  
+  data <- data %>% filter(year(date)==year,month(date) >= limits$startmonth,month(date) <= limits$endmonth, obs_site==sites1[1] | obs_site==sites1[2])
+  
+  data2 <- data %>% filter(next.obs_site == sites2[1] | next.obs_site == sites2[2], isLast==F)
+  data2$delayed <- ifelse(data2$dtime > mindays,T,F)
+  data2$status <- ifelse(data2$delayed,"delayed","on time")
+  
+  #data2$delayed <- ifelse(data2$dtime > limits$mindays,T,F)
+  
+  data1 <- merge(data2 %>% select(tag_id) %>% unique() %>% mutate(site2=T),data,all.y=T)
+
+  data1$site2 <- ifelse(is.na(data1$site2),F,T)
+  data1$delayed <- ifelse(data1$dtime > mindays,T,F)
+  
+  data1$status <- ifelse(!data1$site2,"undetected",ifelse(data1$delayed,"delayed","on time"))
+  
+damdata <- damdata %>% filter(year(date)==year,month(date) >= limits$startmonth,month(date) <= limits$endmonth)
+  damdata$TempC <- as.numeric(damdata$temp)
+  
+damdata$date <-  floor_date(damdata$date,unit="day") %>% as.character()
+
+data.x <- data1
+data.x$date <- floor_date(data.x$date,unit="day") %>% as.character()
+data.x<- data.x %>% group_by(date,status) %>% summarise(count=n())
+scale.x <- 1/max(data.x$count)
+data.x <- merge(data.x,damdata %>% select(date,temp))
+data.x$dtime <- 0
+data.x$date <- ymd(data.x$date)
+data.x$next.date <- data.x$date
+
+data.y <- data1 %>% filter(status != "undetected")
+data.y$date <- floor_date(data.y$next.date,unit="day") %>% as.character()
+data.y<- data.y %>% group_by(date,status) %>% summarise(count=n())
+scale.y <- 1/max(data.y$count)
+data.y <- merge(data.y,damdata %>% select(date,temp))
+data.y$dtime <- 0
+data.y$date <- ymd(data.y$date)
+data.y$next.date <- data.y$date
+  
+  g <- ggplot(data2 %>% filter(year(next.date)==year,status != "undetected"),aes(date,next.date,colour=status)) + ylab(ylab) + xlab(xlab) + ggtitle(title) + geom_point(size=.5) + scale_x_datetime(limits=getLimits(year,limits$startmonth,limits$endmonth),date_breaks = "month",labels = date_format("%b")) + scale_y_datetime(limits=getLimits(year,limits$startmonth,limits$endmonth),date_breaks = "month",labels = date_format("%b"))
+  
+  g1 <- g
+
+  
+  #g
+  damdata$date <- ymd(damdata$date) %>% as.POSIXct()
+  
+  g <- g %>% addTemps(damdata, ymd(paste(year,"-",limits$startmonth+1,"-01",sep="-")),ymd(paste(year,"11-01",sep="-")),ymd(paste(year,"06-01",sep="-")),ymd(paste(year,"07-15",sep="-"))) + theme_bw()
+  
+  
+  
+  return(list(data=data,data1=data1,data2=data2,data.x=data.x,data.y=data.y,g=g, g1=g1,damdata=damdata))
+}
+
+###################################
+
+plotStacked <- function(lst){
+plot1 <- lst$g
+plot2 <- ggplot(lst$data.x,aes(date,count,fill=status)) + geom_bar(stat="identity")
+plot3 <- ggplot(lst$data.y,aes(date,count,fill=status)) + geom_bar(stat="identity")
+plot_grid(plot1, plot2, plot3, ncol=1,nrow=3)
+}
+
+#####################################
+
+addTemps <- function(g,damdata, xstart, xend, ystart ,yend){
+  minT <- 18
+  maxT <- 23
+  delta <- as.numeric(difftime(as.POSIXct(as.POSIXlt(yend)),as.POSIXct(as.POSIXlt(ystart)),units="mins"))
+  scale <- delta/(maxT-minT)
+  
+  grid.start <- data.frame(id=seq(minT,maxT),next.date=c(seq(0,maxT-minT)))
+  grid.end <- grid.start
+  grid.start$date <- xstart
+  grid.end$date <- xend
+  grid <- rbind(grid.start,grid.end)
+  
+  
+  grid$next.date <- (ystart + minutes(scale*grid$next.date)) %>% as.POSIXct()
+  grid$date <- grid$date %>% as.POSIXct()
+  
+  grid$status <- "on time"
+  
+  
+
+  damdata$temp <- as.numeric(damdata$temp)
+  
+  damdata <- filter(damdata,!is.na(temp),date > xstart, date < xend,temp>minT)
+  damdata$status <- "on time"
+  
+  damdata$mins <- round(scale*(damdata$temp - minT))
+  damdata$next.date <- (ystart + minutes(damdata$mins)) %>% as.POSIXct()
+  
+  g <- g + geom_point(data=damdata,aes(date,next.date),inherit.aes=F,size=1)
+  
+  g <- g + geom_line(data=grid,aes(date,next.date,group=id),colour="gray",inherit.aes=F)
+  
+  vline <- data.frame(date=rep(xend,2),next.date=c(ystart,yend))
+  vline$date <- as.POSIXct(vline$date)
+  vline$next.date <- as.POSIXct(vline$next.date)
+  
+  g <- g + geom_line(data=vline,aes(date,next.date),colour="black",inherit.aes=F)
+  
+  text <- grid %>% select(next.date) %>% unique() %>% arrange(next.date)
+  text$date = xend %>% as.POSIXct() + days(3)
+  
+  text$label <- seq(minT,maxT)
+  text <- filter(text,label %% 2 == 0)
+  text$status <- "on time"
+  
+  
+  g <- g + geom_text(data=text,aes(date,next.date,label=as.character(label)),inherit.aes=F)
+  
+  
+  return(g)
+}
+
+##########
+getBreaks <- function(year,startmonth,endmonth){
+  ticks <- seq(startmonth,endmonth)
+  ticks <- ymd(paste(year,ticks,1,spe="-"))
+  return(ticks)
+}
+
+getLimits <- function(year,startmonth,endmonth){
+  limits <- c(ymd(paste(year,startmonth-1,25,sep="-")),ymd(paste(year,endmonth,10,sep="-")))
+  return(as.POSIXct(limits))
+}
+
+```
+
+
+```{r,echo=F}
+#Example sanity check for detecion traces
+all %>% filter(species=="Steelhead",year(date1)==2013) %>% arrange(tag_id,date1) %>% group_by(tag_id) %>% summarise(detections=paste(obs_site,collapse="-")) %>% group_by(detections) %>% summarise(count=n()) %>% arrange(desc(count)) %>% View()
+```
+
+```{r,echo=F}
+chinook <- splitDetections(all,"Chinook")
+steelhead <- splitDetections(all,"Steelhead")
+```
+
+```{r,warning=F,echo=F}
+BON2002 <- getBONParams(2002)
+BON2013 <- getBONParams(2013)
+BON2014 <- getBONParams(2014)
+BON2015 <- getBONParams(2015)
+BON2016 <- getBONParams(2016)
+BON2017 <- getBONParams(2017)
+BON2018 <- getBONParams(2018)
+BON2019 <- getBONParams(2019)
+```
+
+```{r,warning=F,echo=F}
+sh2013 <- steelhead %>% filter(year(date)==2013) %>% getDetectionTimes()
+sh2014 <- steelhead %>% filter(year(date)==2014) %>% getDetectionTimes()
+sh2015 <- steelhead %>% filter(year(date)==2015) %>% getDetectionTimes()
+sh2016 <- steelhead %>% filter(year(date)==2016) %>% getDetectionTimes()
+sh2017 <- steelhead %>% filter(year(date)==2017) %>% getDetectionTimes()
+sh2018 <- steelhead %>% filter(year(date)==2018) %>% getDetectionTimes()
+sh2019 <- steelhead %>% filter(year(date)==2019) %>% getDetectionTimes()
+#sh2002 <- steelhead %>% filter(year(date)==2002) %>% getDetectionTimes()
+```
+```{r,warning=F,echo=F}
+ch2013 <- chinook %>% filter(year(date)==2013) %>% getDetectionTimes()
+ch2014 <- chinook %>% filter(year(date)==2014) %>% getDetectionTimes()
+ch2015 <- chinook %>% filter(year(date)==2015) %>% getDetectionTimes()
+ch2016 <- chinook %>% filter(year(date)==2016) %>% getDetectionTimes()
+ch2017 <- chinook %>% filter(year(date)==2017) %>% getDetectionTimes()
+ch2018 <- chinook %>% filter(year(date)==2018) %>% getDetectionTimes()
+ch2019 <- chinook %>% filter(year(date)==2019) %>% getDetectionTimes()
+```
+
+```{r,warning=F,echo=F}
+sh2013t <- read.csv("https://salmonetics.github.io/data-SRHydroPIT-tag/adult/steelhead2013Adult.csv",stringsAsFactors=F) %>% group_by(tag_id,transported) %>% summarise()
+```
+
+
+```{r,warning=F,echo=F,height=8}
+test <- plotDelays(sh2013 %>% filter(subbasin != "Lower Columbia-Sandy"),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Steelhead Bonneville to The Dalles","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+
+test <- plotDelays(sh2014 %>% filter(subbasin != "Lower Columbia-Sandy"),BON2014,2014,c("BO1","BO4"),c("TD1","TD2"),"2014 Steelhead Bonneville to The Dalles","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2014 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2014)
+
+test <- plotDelays(sh2015 %>% filter(subbasin != "Lower Columbia-Sandy"),BON2015,2015,c("BO1","BO4"),c("TD1","TD2"),"2015 Steelhead Bonneville to The Dalles","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2015 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2015)
+
+test <- plotDelays(sh2016 %>% filter(subbasin != "Lower Columbia-Sandy"),BON2016,2016,c("BO1","BO4"),c("TD1","TD2"),"2016 Steelhead Bonneville to The Dalles","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2016 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2016)
+
+test <- plotDelays(sh2017 %>% filter(subbasin != "Lower Columbia-Sandy"),BON2017,2017,c("BO1","BO4"),c("TD1","TD2"),"2017 Steelhead Bonneville to The Dalles","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2017 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2017)
+
+test <- plotDelays(sh2018 %>% filter(subbasin != "Lower Columbia-Sandy"),BON2018,2018,c("BO1","BO4"),c("TD1","TD2"),"2018 Steelhead Bonneville to The Dalles","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2018 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2018)
+
+test <- plotDelays(sh2019 %>% filter(subbasin != "Lower Columbia-Sandy"),BON2019,2019,c("BO1","BO4"),c("TD1","TD2"),"2019 Steelhead Bonneville to The Dalles","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2019 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2019)
+```
+
+Transported
+```{r,warning=F,echo=F,height=8}
+test <- plotDelays(sh2013 %>% merge(sh2013t) %>% filter(transported == T),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Transported=T Steelhead BON-TDD","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+
+test <- plotDelays(sh2013 %>% merge(sh2013t) %>% filter(transported == F),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Transported=F Steelhead BON-TDD","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+```
+
+BONAFF
+```{r,warning=F,echo=F,height=8}
+
+test <- plotDelays(sh2013 %>% filter(rel_site=="BONAFF"),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 BONAFF Steelhead Bonneville to The Dalles","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+
+test <- plotDelays(ch2013 %>% filter(rel_site=="BONAFF"),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 BONAFF Fall Chinook Bonneville to The Dalles","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+```
+```{r,warning=F,echo=F,height=8}
+test <- plotDelays(sh2013 %>% filter(subbasin != "Lower Columbia-Sandy", rtype=="W"),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Wild Steelhead Bonneville to The Dalles","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+
+
+test <- plotDelays(sh2013 %>% filter(subbasin != "Lower Columbia-Sandy", rtype=="H"),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Hatchery Steelhead Bonneville to The Dalles","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+
+test <- plotDelays(sh2019 %>% filter(subbasin != "Lower Columbia-Sandy", rtype=="W"),BON2019,2019,c("BO1","BO4"),c("TD1","TD2"),"2019 Wild Steelhead Bonneville to The Dalles","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+
+test <- plotDelays(sh2019 %>% filter(subbasin != "Lower Columbia-Sandy", rtype=="H"),BON2019,2019,c("BO1","BO4"),c("TD1","TD2"),"2019 Hatchery Steelhead Bonneville to The Dalles","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+```
+
+Steelhead Delay by Release Basin
+```{r,warning=F,echo=F,height=8}
+test <- plotDelays(sh2013 %>% filter(basin == "Salmon"),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Salmon Basin Steelhead BON-TDD","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+
+
+test <- plotDelays(sh2013 %>% filter(basin == "Clearwater"),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Clearwater Steelhead BON-TDD","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+
+test <- plotDelays(sh2013 %>% filter(basin == "Upper Columbia"),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Upper Columbia Steelhead BON-TDD","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+
+test <- plotDelays(sh2013 %>% filter(basin == "Middle Columbia" | basin == "Yakima"),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Middle Columbia/Yakima Steelhead BON-TDD","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+```
+
+Fall Chinook Delay 2013-2019
+```{r,warning=F,echo=F,height=8}
+test <- plotDelays(ch2013 %>% filter(subbasin != "Lower Columbia-Sandy"),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Fall Chinook Bonneville to The Dalles","Date at Bonneville","Date at The Dalles",limits=list(startmonth=8,endmonth=11),mindays=4)
+
+g2013c <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013c)
+
+
+test <- plotDelays(ch2014 %>% filter(subbasin != "Lower Columbia-Sandy"),BON2014,2014,c("BO1","BO4"),c("TD1","TD2"),"2014 Fall Chinook Bonneville to The Dalles","Date at Bonneville","Date at The Dalles",limits=list(startmonth=8,endmonth=11),mindays=4)
+
+g2014c <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2014c)
+
+
+test <- plotDelays(ch2015 %>% filter(subbasin != "Lower Columbia-Sandy"),BON2015,2015,c("BO1","BO4"),c("TD1","TD2"),"2015 Fall Chinook Bonneville to The Dalles","Date at Bonneville","Date at The Dalles",limits=list(startmonth=8,endmonth=11),mindays=4)
+
+g2015c <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2015c)
+
+test <- plotDelays(ch2016 %>% filter(subbasin != "Lower Columbia-Sandy"),BON2016,2016,c("BO1","BO4"),c("TD1","TD2"),"2016 Fall Chinook Bonneville to The Dalles","Date at Bonneville","Date at The Dalles",limits=list(startmonth=8,endmonth=11),mindays=4)
+
+g2016c <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2016c)
+
+
+test <- plotDelays(ch2017 %>% filter(subbasin != "Lower Columbia-Sandy"),BON2017,2017,c("BO1","BO4"),c("TD1","TD2"),"2017 Fall Chinook Bonneville to The Dalles","Date at Bonneville","Date at The Dalles",limits=list(startmonth=8,endmonth=11),mindays=4)
+
+g2017c <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2017c)
+
+
+test <- plotDelays(ch2018 %>% filter(subbasin != "Lower Columbia-Sandy"),BON2018,2018,c("BO1","BO4"),c("TD1","TD2"),"2018 Fall Chinook Bonneville to The Dalles","Date at Bonneville","Date at The Dalles",limits=list(startmonth=8,endmonth=11),mindays=4)
+
+g2018c <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2018c)
+
+test <- plotDelays(ch2019 %>% filter(subbasin != "Lower Columbia-Sandy"),BON2019,2019,c("BO1","BO4"),c("TD1","TD2"),"2019 Chinook Bonneville to The Dalles","Date at Bonneville","Date at The Dalles",limits=list(startmonth=8,endmonth=11),mindays=4)
+
+g2018c <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2018c)
+
+```
+
+Plot Probability Function
+```{r,echo=F}
+plotProbabilities <- function(data,damdata,year){
+  plot1 <- data %>% filter(obs_site=="BO4" | obs_site== "BO1") %>% filter(isLast==T | obs_site != next.obs_site,year(date)==year) %>% mutate(day=floor_date(date,unit="day"),status=ifelse(isLast==T,"undetected",ifelse(dtime<4,"on time","delayed"))) %>% group_by(day,status) %>% summarise(n=n()) %>% mutate(freq=n/sum(n)) %>% filter(month(day) > 6 & month(day)<10) %>% ggplot(aes(day,freq,fill=status)) + geom_area() + xlab("Date at Bonneville") + ylab("Probability") + ggtitle(paste(year,"SR Steelhead BON to TDA")) + theme(legend.position = "top",axis.title.x=element_blank(),axis.text.x=element_blank())
+
+plot2 <- ggplot(damdata %>% filter(year(date)==year,month(date)>6,month(date)<10),aes(date,temp)) + geom_point() + xlab("Date at Bonneville") + ylab("Temperature (C)")
+
+plot_grid(plot1,plot2,nrow=2,rel_heights = c(8, 4),align = "v")
+}
+```
+
+
+
+Plot Steelhead Probabilities 2013-2009
+```{r,warning=F,echo=F,height=15}
+plotProbabilities(sh2013,BON2013,2013)
+plotProbabilities(sh2014,BON2014,2014)
+plotProbabilities(sh2015,BON2015,2015)
+plotProbabilities(sh2016,BON2016,2016)
+plotProbabilities(sh2017,BON2017,2017)
+plotProbabilities(sh2018,BON2018,2018)
+plotProbabilities(sh2019,BON2018,2019)
+```
+
+```{r,echo=F}
+plotProbTemp <- function(data,damdata,year){
+  data1 <- data %>% filter(obs_site=="BO4" | obs_site== "BO1") %>% filter(isLast==T | obs_site != next.obs_site,year(date)==year) %>% mutate(day=as.character(floor_date(date,unit="day")),status=ifelse(isLast==T,"undetected",ifelse(dtime<6,"on time","delayed"))) %>% group_by(day,status) %>% summarise(n=n()) %>% mutate(freq=n/sum(n)) %>% filter(month(day) > 6 & month(day)<10) %>% data.frame()
+
+data2 <- damdata %>% filter(year(date)==year,month(date)>6,month(date)<10) %>% mutate(day=as.character(floor_date(date,unit="day"))) %>% select(day,temp)
+
+data3 <- merge(data1,data2)
+
+g <- ggplot(data3,aes(temp,freq,colour=status)) + geom_point() + geom_smooth(method="glm") + xlab("Temperature(C)") + ylab("Probability") + ggtitle(paste(year,"SR Steelhead BON to TDA"))
+
+return(list(data=data3,g=g))
+
+}
+
+
+```
+
+```{r,echo=F}
+getAllProbTemp <- function(datas=list(sh2013,sh2014,sh2015,sh2016,sh2017,sh2018,sh2019),damdatas=list(BON2013,BON2014,BON2015,BON2016,BON2017,BON2018,BON2019),years=c(2013,2014,2015,2016,2017,2018,2019)){
+  data1 <- data.frame()
+  for(i in 1:length(years)){
+    data1 <- rbind(data1,datas[[i]] %>% filter(obs_site=="BO4" | obs_site== "BO1") %>% filter(isLast==T | obs_site != next.obs_site,year(date)==years[i]) %>% mutate(day=as.character(floor_date(date,unit="day")),status=ifelse(isLast==T,"undetected",ifelse(dtime<6,"on time","delayed"))))
+  }
+  
+  damdata <- data.frame()
+  for(i in 1:length(years)){
+    damdata <- rbind(damdata,damdatas[[i]] %>% filter(year(date)==years[i],month(date)>6,month(date)<10) %>% mutate(day=as.character(floor_date(date,unit="day"))) %>% select(day,temp))
+  }
+  
+  data3 <- merge(data1,damdata) %>% group_by(temp,status) %>% summarise(n=n()) %>% mutate(freq=n/sum(n)) %>% data.frame()
+  
+  data4 <- data.frame()
+  
+  for(i in 1:nrow(data3)){
+    for(j in 1:data3$n[i])
+      data4 <- rbind(data4,data3[i,])
+  }
+  
+  return(data4)
+
+}
+
+```
+
+
+```{r,warning=F,echo=F,height=15}
+allProbTemps <- getAllProbTemp()
+allProbTemps %>% ggplot(aes(temp,freq,colour=status)) + geom_point(size=1) + geom_smooth(method="lm") + xlab("Temperature(C)") + ylab("Probability") + ggtitle(paste("2013-2018","SR Steelhead BON to TDA")) + scale_y_continuous(limits=c(0,1)) + scale_x_continuous(limits=c(17,24))
+```
+
+```{r,warning=F,echo=F,height=15}
+df <- plotProbTemp(sh2013,BON2013,2013)$data
+df <- rbind(df,plotProbTemp(sh2014,BON2014,2014)$data)
+df <- rbind(df,plotProbTemp(sh2015,BON2015,2015)$data)
+df <- rbind(df,plotProbTemp(sh2016,BON2016,2016)$data)
+df <- rbind(df,plotProbTemp(sh2017,BON2017,2017)$data)
+df <- rbind(df,plotProbTemp(sh2018,BON2018,2018)$data)
+df <- rbind(df,plotProbTemp(sh2019,BON2019,2019)$data)
+ggplot(df,aes(temp,freq,colour=status)) + geom_point(size=1) + geom_smooth(method="loess") + xlab("Temperature(C)") + ylab("Probability") + ggtitle(paste("2013-2018","SR Steelhead BON to TDA")) + scale_y_continuous(limits=c(0,1)) + scale_x_continuous(limits=c(17,24))
+```
+
+```{r, echo=F}
+showData <- function(data,year){
+data %>% filter(obs_site=="BO4" | obs_site== "BO1") %>% filter(isLast==T | obs_site != next.obs_site,year(date)==year) %>% mutate(day=floor_date(date,unit="day"),status=ifelse(isLast==T,"undetected",ifelse(dtime<4,"on time","delayed"))) %>% group_by(day,status) %>% summarise(n=n()) %>% mutate(freq=n/sum(n)) %>% filter(month(day) > 6 & month(day)<10)
+}
+
+cumByStatus1  <- function(data,damdata,year,startmonth,stopmonth){
+data %>% filter(obs_site=="BO4" | obs_site== "BO1") %>% filter(isLast==T | obs_site != next.obs_site,year(date)==year) %>% mutate(day=floor_date(date,unit="day"),status=ifelse(isLast==T,"undetected",ifelse(dtime<4,"on time","delayed"))) %>% group_by(day,status) %>% summarise(n=n()) %>% filter(month(day) >= startmonth & month(day)<=stopmonth)  %>% group_by(status) %>% mutate(cumsum = cumsum(n)) %>% arrange(status,day)
+}
+
+#take 2
+cumByStatus  <- function(data,damdata,year,startmonth,stopmonth){
+data.all <- data %>% filter(obs_site=="BO4" | obs_site== "BO1",year(date)==year) %>% mutate(day=floor_date(date,unit="day"))
+data.last <- data.all %>% filter(isLast==T) %>% mutate(status="undetected")
+data.detected <- data.all %>% filter(next.obs_site == "TD1" | next.obs_site=="TD2") %>% mutate(status=ifelse(isLast==T,"undetected",ifelse(dtime<4,"on time","delayed")))
+data.missed <- data.all %>% filter(next.obs_site == "MC1" | next.obs_site=="MC2") %>% mutate(status="missed")
+#add data.missed to the rbind below for completeness
+data <- rbind(data.last,data.detected) %>% group_by(day,status) %>% summarise(n=n()) %>% filter(month(day) >= startmonth & month(day)<=stopmonth)  %>% group_by(status) %>% mutate(cumsum = cumsum(n)) %>% arrange(status,day)
+return(data)
+}
+
+plotCumByStatus <- function(plot1,damdata, year,startmonth,stopmonth){
+   
+plot2 <- ggplot(damdata %>% filter(year(date)==year,month(date)>=startmonth,month(date)<=stopmonth),aes(date,temp)) + geom_point() + xlab("Date at Bonneville") + ylab("Temp(C)") + geom_hline(yintercept = 21,color="red")
+
+plot_grid(plot1,plot2,nrow=2,rel_heights = c(8, 4),align = "v")
+ }
+
+```
+
+```{r,warning=F,echo=F,height=10}
+fate <- data.frame()
+fate <- cumByStatus(sh2013,BON2013,2013,7,9) %>% group_by(status) %>% summarise(fishcount=sum(n)) %>% mutate(year=2013) %>% rbind(fate)
+fate <- cumByStatus(sh2014,BON2014,2014,7,9) %>% group_by(status) %>% summarise(fishcount=sum(n)) %>% mutate(year=2014) %>% rbind(fate)
+fate <- cumByStatus(sh2015,BON2015,2015,7,9) %>% group_by(status) %>% summarise(fishcount=sum(n)) %>% mutate(year=2015) %>% rbind(fate)
+fate <- cumByStatus(sh2016,BON2016,2016,7,9) %>% group_by(status) %>% summarise(fishcount=sum(n)) %>% mutate(year=2016) %>% rbind(fate)
+fate <- cumByStatus(sh2017,BON2017,2017,7,9) %>% group_by(status) %>% summarise(fishcount=sum(n)) %>% mutate(year=2017) %>% rbind(fate)
+fate <- cumByStatus(sh2018,BON2018,2018,7,9) %>% group_by(status) %>% summarise(fishcount=sum(n)) %>% mutate(year=2018) %>% rbind(fate)
+fate <- cumByStatus(sh2019,BON2019,2019,7,9) %>% group_by(status) %>% summarise(fishcount=sum(n)) %>% mutate(year=2019) %>% rbind(fate)
+
+fate %>% filter(status != "missed") %>% mutate(year=factor(year)) %>% ggplot(aes(year,fishcount,fill=status, label=fishcount)) + geom_bar(stat="identity") + ggtitle("Summer Steelhead Fate Bonneville-The Dalles") + geom_text(size = 4, position = position_stack(vjust = 0.5))
+
+fate <- data.frame()
+fate <- cumByStatus(ch2013,BON2013,2013,8,9) %>% group_by(status) %>% summarise(fishcount=sum(n)) %>% mutate(year=2013) %>% rbind(fate)
+fate <- cumByStatus(ch2014,BON2014,2014,8,9) %>% group_by(status) %>% summarise(fishcount=sum(n)) %>% mutate(year=2014) %>% rbind(fate)
+fate <- cumByStatus(ch2015,BON2015,2015,8,9) %>% group_by(status) %>% summarise(fishcount=sum(n)) %>% mutate(year=2015) %>% rbind(fate)
+fate <- cumByStatus(ch2016,BON2016,2016,8,9) %>% group_by(status) %>% summarise(fishcount=sum(n)) %>% mutate(year=2016) %>% rbind(fate)
+fate <- cumByStatus(ch2017,BON2017,2017,8,9) %>% group_by(status) %>% summarise(fishcount=sum(n)) %>% mutate(year=2017) %>% rbind(fate)
+fate <- cumByStatus(ch2018,BON2018,2018,8,9) %>% group_by(status) %>% summarise(fishcount=sum(n)) %>% mutate(year=2018) %>% rbind(fate)
+fate <- cumByStatus(ch2019,BON2019,2019,8,9) %>% group_by(status) %>% summarise(fishcount=sum(n)) %>% mutate(year=2019) %>% rbind(fate)
+
+fate %>% filter(status != "missed") %>% mutate(year=factor(year)) %>% ggplot(aes(year,fishcount,fill=status, label=fishcount)) + geom_bar(stat="identity") + ggtitle("Fall Chinook Fate Bonneville-The Dalles") + geom_text(size = 4, position = position_stack(vjust = 0.5))
+```
+
+Plot Cumulative Fish by Fate
+```{r,warning=F,echo=F,height=10}
+#dataframe for fate by year
+fate <- data.frame()
+#plot cumulative data
+plot1 <- cumByStatus(sh2013,BON2013,2013,7,9) %>% ggplot(aes(day,cumsum,color=status)) + geom_line(size=1) + ggtitle("Fate for July-Oct 2013 Steelhead BON-TDD") + xlab("Cumulative Fish") + ylab("Cumulative") + theme(legend.position = "top",axis.title.x=element_blank(),axis.text.x=element_blank())
+
+plotCumByStatus(plot1,BON2013,2013,7,9)
+
+plot1 <- cumByStatus(sh2014,BON2014,2014,7,9) %>% ggplot(aes(day,cumsum,color=status)) + geom_line(size=1) + ggtitle("Fate for July-Oct 2014 Steelhead BON-TDD") + xlab("Cumulative Fish") + ylab("Cumulative") + theme(legend.position = "top",axis.title.x=element_blank(),axis.text.x=element_blank())
+
+plotCumByStatus(plot1,BON2014,2014,7,9)
+
+plot1 <- cumByStatus(sh2015,BON2015,2015,7,9) %>% ggplot(aes(day,cumsum,color=status)) + geom_line(size=1) + ggtitle("Fate for July-Oct 2015 Steelhead BON-TDD") + xlab("Cumulative Fish") + ylab("Cumulative") + theme(legend.position = "top",axis.title.x=element_blank(),axis.text.x=element_blank())
+
+plotCumByStatus(plot1,BON2015,2015,7,9)
+
+plot1 <- cumByStatus(sh2016,BON2016,2016,7,9) %>% ggplot(aes(day,cumsum,color=status)) + geom_line(size=1) + ggtitle("Fate for July-Oct 2016 Steelhead BON-TDD") + xlab("Cumulative Fish") + ylab("Cumulative") + theme(legend.position = "top",axis.title.x=element_blank(),axis.text.x=element_blank())
+
+plotCumByStatus(plot1,BON2016,2016,7,9)
+
+plot1 <- cumByStatus(sh2017,BON2017,2017,7,9) %>% ggplot(aes(day,cumsum,color=status)) + geom_line(size=1) + ggtitle("Fate for July-Oct 2017 Steelhead BON-TDD") + xlab("Cumulative Fish") + ylab("Cumulative") + theme(legend.position = "top",axis.title.x=element_blank(),axis.text.x=element_blank())
+
+plotCumByStatus(plot1,BON2017,2017,7,9)
+
+plot1 <- cumByStatus(sh2018,BON2018,2018,7,9) %>% ggplot(aes(day,cumsum,color=status)) + geom_line(size=1) + ggtitle("Fate for July-Oct 2018 Steelhead BON-TDD") + xlab("Cumulative Fish") + ylab("Cumulative") + theme(legend.position = "top",axis.title.x=element_blank(),axis.text.x=element_blank())
+
+plotCumByStatus(plot1,BON2018,2018,7,9)
+
+plot1 <- cumByStatus(sh2019,BON2019,2019,7,9) %>% ggplot(aes(day,cumsum,color=status)) + geom_line(size=1) + ggtitle("Fate for July-Oct 2019 Steelhead BON-TDD") + xlab("Cumulative Fish") + ylab("Cumulative") + theme(legend.position = "top",axis.title.x=element_blank(),axis.text.x=element_blank())
+
+plotCumByStatus(plot1,BON2019,2019,7,9)
+```
+
+Plot Cumulative Fish Compare Wild vs. Hatchery
+```{r,warning=F,echo=F,height=10}
+#plot cumulative data
+plot1 <- cumByStatus(sh2013 %>% filter(rtype=="W"),BON2013,2013,7,9) %>% ggplot(aes(day,cumsum,color=status)) + geom_line(size=1) + ggtitle("Fate for July-Oct 2013 Wild Steelhead BON-TDD") + xlab("Cumulative Fish") + ylab("Cumulative") + theme(legend.position = "top",axis.title.x=element_blank(),axis.text.x=element_blank())
+
+plotCumByStatus(plot1,BON2013,2013,7,9)
+
+plot1 <- cumByStatus(sh2013 %>% filter(rtype=="H"),BON2013,2013,7,9) %>% ggplot(aes(day,cumsum,color=status)) + geom_line(size=1) + ggtitle("Fate for July-Oct 2013 Hatchery Steelhead BON-TDD") + xlab("Cumulative Fish") + ylab("Cumulative") + theme(legend.position = "top",axis.title.x=element_blank(),axis.text.x=element_blank())
+
+plotCumByStatus(plot1,BON2013,2013,7,9)
+```
+
+Chinook
+```{r,warning=F,echo=F,height=12}
+plot1 <- cumByStatus(ch2013,BON2013,2013,7,9) %>% ggplot(aes(day,cumsum,color=status)) + geom_line(size=1) + ggtitle("Fate for July-Oct 2013 Chinook BON-TDD") + xlab("Cumulative Fish") + ylab("Cumulative") + theme(legend.position = "top",axis.title.x=element_blank(),axis.text.x=element_blank())
+
+plotCumByStatus(plot1,BON2013,2013,7,9)
+```
+
+
+```{r,echo=F}
+sh2013.damcounts <- read.csv("The Dalles_Steelhead_2013.csv",stringsAsFactors=F) %>% select(Date,Count)
+names(sh2013.damcounts) <- c("day","count")
+sh2013.damcounts$status <- "visual count"
+sh2013.damcounts$day <- as.POSIXct(mdy(sh2013.damcounts$day))
+sh2013.damcounts <- filter(sh2013.damcounts,month(day)>5,month(day)<11,!is.na(count))
+total.damcount <- sum(sh2013.damcounts$count)
+sh2013.damcounts$type <- paste("Dam Counts =",total.damcount)
+
+sh2013.PIT <- sh2013 %>% filter(month(next.date)>5,month(next.date)<11,obs_site=="BO4" | obs_site== "BO1",next.obs_site=="TD1" | next.obs_site=="TD2",subbasin != "Lower Columbia-Sandy") %>% mutate(day=floor_date(next.date,unit="day")) %>% mutate(status=ifelse(dtime<4,"on time","delayed")) %>% group_by(day,status) %>% summarise(count=n()) %>% data.frame()
+total.PIT <- sum(sh2013.PIT$count)
+sh2013.PIT$type <- paste("PIT-tag Detections =",total.PIT)
+```
+
+```{r,warning=F,echo=F,height=12}
+ggplot(rbind(sh2013.damcounts,sh2013.PIT),aes(day,count,fill=status)) + xlab("Date") + ylab("Count") + geom_area(stat="identity") + facet_grid(type ~ .,scale="free") + ggtitle("2013 Steelhead PIT-tag/Visual Count Comparison, The Dalles Dam")
+```
+
+```{r,echo=F}
+loadDamData <- function(fname){
+  damdata <- read.csv(fname,stringsAsFactors=F) %>% select(Date,Count)
+  names(damdata) <- c("day","count")
+  damdata$status <- "visual count"
+  damdata$day <- as.POSIXct(mdy(damdata$day))
+  damdata <- filter(damdata,month(day)>5,month(day)<11,!is.na(count))
+  total.damcount <- sum(damdata$count)
+  damdata$type <- paste("Dam Counts =",total.damcount)
+  return(damdata)
+}
+
+plotDamComp <- function(damdata,pitdata,delay,title){
+pitdata <- pitdata %>% filter(month(next.date)>5,month(next.date)<11,obs_site=="BO4" | obs_site== "BO1",next.obs_site=="TD1" | next.obs_site=="TD2") %>% mutate(day=floor_date(next.date,unit="day")) %>% mutate(status=ifelse(dtime<delay,"on time","delayed")) %>% group_by(day,status) %>% summarise(count=n()) %>% data.frame()
+total.PIT <- sum(sh2013.PIT$count)
+pitdata$type <- paste("PIT-tag Detections =",total.PIT)
+
+ggplot(rbind(damdata,pitdata),aes(day,count,fill=status)) + xlab("Date at The Dalles") + ylab("Count") + geom_area(stat="identity") + facet_grid(type ~ .,scale="free") + ggtitle(title)
+}
+```
+
+```{r,warning=F,echo=F,height=12}
+plotDamComp(loadDamData("The Dalles_Steelhead_2013.csv"),sh2013 %>% filter(subbasin != "Lower Columbia-Sandy"),4,"2013 Steelhead PIT-tag/Visual Count Comparison (delay=4d)")
+
+plotDamComp(loadDamData("The Dalles_Steelhead_2014.csv"),sh2014 %>% filter(subbasin != "Lower Columbia-Sandy"),4,"2014 Steelhead PIT-tag/Visual Count Comparison (delay=4d)")
+
+plotDamComp(loadDamData("The Dalles_Steelhead_2015.csv"),sh2015 %>% filter(subbasin != "Lower Columbia-Sandy"),4,"2015 Steelhead PIT-tag/Visual Count Comparison (delay=4d)")
+
+plotDamComp(loadDamData("The Dalles_Steelhead_2016.csv"),sh2016 %>% filter(subbasin != "Lower Columbia-Sandy"),4,"2016 Steelhead PIT-tag/Visual Count Comparison (delay=4d)")
+
+plotDamComp(loadDamData("The Dalles_Steelhead_2017.csv"),sh2017 %>% filter(subbasin != "Lower Columbia-Sandy"),4,"2017 Steelhead PIT-tag/Visual Count Comparison (delay=4d)")
+
+plotDamComp(loadDamData("The Dalles_Steelhead_2018.csv"),sh2018 %>% filter(subbasin != "Lower Columbia-Sandy"),4,"2018 Steelhead PIT-tag/Visual Count Comparison (delay=4d)")
+
+plotDamComp(loadDamData("The Dalles_Steelhead_2019.csv"),sh2019 %>% filter(subbasin != "Lower Columbia-Sandy"),4,"2019 Steelhead PIT-tag/Visual Count Comparison (delay=4d)")
+```
+
+plotCumByStatus(plot1,BON2013,2013,7,9)
+
+```{r,warning=F,echo=F,height=12}
+sh2013.cum <- sh2013 %>% filter(obs_site=="BO1" | obs_site=="BO4",next.obs_site=="TD1" | next.obs_site=="TD2",isLast==F,dtime<8) %>% arrange(dtime)
+sh2013.cum$count <- seq(1:nrow(sh2013.cum))
+ch2013.cum <- ch2013 %>% filter(obs_site=="BO1" | obs_site=="BO4",next.obs_site=="TD1" | next.obs_site=="TD2",isLast==F,dtime < 8) %>% arrange(dtime)
+ch2013.cum$count <- seq(1:nrow(ch2013.cum))
+cum2013 <- rbind(sh2013.cum,ch2013.cum)
+cum2013$departure <- ifelse(hour(cum2013$date)<12,"morning","afternoon")
+cum2013$arrival <- ifelse(hour(cum2013$next.date)<12,"morning","afternoon")
+ggplot(cum2013,aes(dtime,count,group=species,colour=arrival)) + geom_point(size=.5) + geom_vline(xintercept=4) + facet_grid(departure ~ .,scale="free")
+```
+```{r,warning=F,echo=F,height=10}
+cum2013$hour <- hour(cum2013$date) + minute(cum2013$date)/60
+cum2013$next.hour <- hour(cum2013$next.date) + minute(cum2013$next.date)/60
+g <- ggplot(cum2013,aes(hour,next.hour,colour=species)) + geom_point(size=.5)
+
+g2013 <- ggMarginal(g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram", binwidth=.5)
+grid::grid.newpage()
+grid::grid.draw(g2013)
+
+```
+```{r,warning=F,echo=F,height=10}
+plotTTimes <- function(df1,df2){
+df1 <- df1 %>% filter(obs_site=="BO1" | obs_site=="BO4",next.obs_site=="TD1" | next.obs_site=="TD2",isLast==F,dtime<8) %>% arrange(dtime)
+df1$count <- seq(1:nrow(df1))
+df2 <- df2 %>% filter(obs_site=="BO1" | obs_site=="BO4",next.obs_site=="TD1" | next.obs_site=="TD2",isLast==F,dtime<8) %>% arrange(dtime)
+df2$count <- seq(1:nrow(df2))
+df <- rbind(df1,df2)
+g <- ggplot(df,aes(dtime,count,colour=species)) + geom_point(size=.5) + geom_vline(xintercept=4)
+
+df$hour <- hour(df$date) + minute(df$date)/60
+df$next.hour <- hour(df$next.date) + minute(df$next.date)/60
+g1 <- ggplot(df,aes(hour,next.hour,colour=species)) + geom_point(size=.5)
+
+g2 <- ggMarginal(g1 + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram", binwidth=.5)
+
+return(list(g=g,g2=g2))
+}
+```
+
+
+Step thru, a week at a time
+```{r,warning=F,echo=F,height=8}
+test <- plotDelays(sh2013 %>% filter(subbasin != "Lower Columbia-Sandy",week(date)==28),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Steelhead BON-TDD Week 28","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+
+test <- plotDelays(sh2013 %>% filter(subbasin != "Lower Columbia-Sandy",week(date)==29),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Steelhead BON-TDD Week 29","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+
+test <- plotDelays(sh2013 %>% filter(subbasin != "Lower Columbia-Sandy",week(date)==30),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Steelhead BON-TDD Week 30","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+
+test <- plotDelays(sh2013 %>% filter(subbasin != "Lower Columbia-Sandy",week(date)==31),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Steelhead BON-TDD Week 31","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+
+test <- plotDelays(sh2013 %>% filter(subbasin != "Lower Columbia-Sandy",week(date)==32),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Steelhead BON-TDD Week 32","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+
+test <- plotDelays(sh2013 %>% filter(subbasin != "Lower Columbia-Sandy",week(date)==34),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Steelhead BON-TDD Week 34","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+
+test <- plotDelays(sh2013 %>% filter(subbasin != "Lower Columbia-Sandy",week(date)==35),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Steelhead BON-TDD Week 35","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+
+test <- plotDelays(sh2013 %>% filter(subbasin != "Lower Columbia-Sandy",week(date)==36),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Steelhead BON-TDD Week 36","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+
+test <- plotDelays(sh2013 %>% filter(subbasin != "Lower Columbia-Sandy",week(date)==37),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Steelhead BON-TDD Week 37","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+
+test <- plotDelays(sh2013 %>% filter(subbasin != "Lower Columbia-Sandy",week(date)==38),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Steelhead BON-TDD Week 38","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+
+test <- plotDelays(sh2013 %>% filter(subbasin != "Lower Columbia-Sandy",week(date)==39),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Steelhead BON-TDD Week 39","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+
+test <- plotDelays(sh2013 %>% filter(subbasin != "Lower Columbia-Sandy",week(date)==40),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Steelhead BON-TDD Week 40","Date at Bonneville","Date at The Dalles",mindays=4)
+
+g2013 <- ggMarginal(test$g + theme(legend.position = "none"), groupColour = TRUE, groupFill = TRUE,type = "histogram",binwidth = 100000)
+
+grid::grid.newpage()
+grid::grid.draw(g2013)
+```
+
+Look at isLast
+
+```{r,warning=F,echo=F,height=8}
+test <- plotDelays(sh2013 %>% filter(subbasin != "Lower Columbia-Sandy"),BON2013,2013,c("BO1","BO4"),c("TD1","TD2"),"2013 Steelhead Bonneville to The Dalles","Date at Bonneville","Date at The Dalles",mindays=4)
+
+test$data2 %>% select(tag_id,status) %>% merge(sh2013 %>% filter(isLast==TRUE) %>% select(tag_id,obs_site)) %>% group_by(status,obs_site) %>% summarise(count=n()) %>% View()
+
+```
+
+
+```{r,warning=F,echo=F,height=10}
+sh2013 %>% filter(obs_site=="BO4",next.obs_site=="TD1",tag_id==next.tag_id) %>% ggplot(aes(hour(date),hour(next.date))) + geom_jitter()
+```
+
+```{r,warning=F,echo=F,height=10}
+sh2013BON <- loadDamData("Bonneville_Steelhead_2013.csv")
+sh2013TDD <- loadDamData("The Dalles_Steelhead_2013.csv")
+sh2013BON$cumsum <- cumsum(sh2013BON$count)
+sh2013BON$dam <- "Bonneville"
+sh2013TDD$cumsum <- cumsum(sh2013TDD$count)
+sh2013TDD$dam <- "The Dalles"
+sh2013comp <- merge(data.frame(Date=sh2013BON$day,BON=sh2013BON$cumsum),data.frame(Date=sh2013TDD$day,TDD=sh2013TDD$cumsum))
+sh2013comp$rdif <- (sh2013comp$BON-sh2013comp$TDD)/sh2013comp$BON
+```
