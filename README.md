@@ -33,3 +33,28 @@ There are four components to the above chart:
 1. On the left is the corresponding histogram for arrivals at The Dalles, rather different, and highly structured profile from the top. Clearly, many of the fish which depart Bonneville from July into August don’t arrive until September-October, but more interestingly, they arrive in bunches (OK, schools), with each group including fish with a large spread of travel times.
 1. Inset at the bottom is the forebay daily mean temperature at Bonneville (degrees C). This provides one measure of the reservoir temperature around the time that the fish finally arrive at TDA (as shown below). One could also use temperatures at TDA tailrace (or some average), but there is minimal difference between these. Also apparent is the temperatures at which the probability of delay becomes large.
 
+### Effect of Rear Type
+
+![2013 Steelhead](images/2013_Steelhead_Wild.png)
+
+![2013 Steelhead](images/2013_Steelhead_Hatchery.png)
+
+### Effect of Transport
+
+![2013 Steelhead](images/2013_Steelhead_Transport_T.png)
+
+![2013 Steelhead](images/2013_Steelhead_Transport_F.png)
+
+### Effect of Release Basin
+
+![2013 Steelhead](images/2013_Steelhead_Salmon.png)
+
+![2013 Steelhead](images/2013_Steelhead_Clearwater.png)
+
+![2013 Steelhead](images/2013_Steelhead_UC.png)
+
+![2013 Steelhead](images/2013_Steelhead_Yakima.png)
+
+
+
+
