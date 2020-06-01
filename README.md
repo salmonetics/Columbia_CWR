@@ -79,6 +79,29 @@ There are four components to the above chart:
 
 ![2013 Steelhead Comparison](images/2013_Steelhead_Comparison.png)
 
+## Discussion
+Discussion
+Here I will state the obvious:
+
+Many steelhead take longer than 4 days to travel between Bonneville and The Dalles
+1. Groups of fish often arrive at TDA at a date irrespective of their travel time (or date at BON)
+1. The probability of being delayed increases with temperature
+1. From PIT-tag data alone, it is not possible to discern what each fish was doing in between detections, where they spent their time.
+1. There are various possible explanations, of varying degree of likelihood, but I will describe one model which is consistent with the PIT-tag results and the prior work using radio-tagged fish. I call it:
+
+### Bar Hopping Model
+Consider a street with several drinking establishments, but different closing times. As one bar closes, the patrons there move on down the street and some of them stop at the next open bar while others just go home (or maybe another open one). And when that second one closes, the bar hopping repeats and so forth until all bars are closed for the night.
+
+Similarly, consider the reservoir above Bonneville with a several cool water refuges between there and The Dalles. Some fish just want to get to The Dalles as fast as possible, while others stop at the nearest spot (CWR) to cool off for a while. The fish in a hurry are (close to) the blue diagonal in the scatterplot chart(s). The fish in the CWR stay there until something prompts them to leave (perhaps a trigger low temperature differential between the CWR and the reservoir). Some of the those departing swim all the way to The Dalles (yielding a peak in the TDA arrival distribution determined by the CWR “closing time” plus the brief direct travel time from that CWR location to TDA while some stop at the next CWR along the way. This repeats until all CWR have "kicked out all of their customers" (some, sadly, never make it home).
+
+### Rest Stop Model
+
+This can be contrasted with a “Rest Stop” model, where some fish stop and spend some time (a distribution around some mean delay) before moving on. This model is not consistent with the PIT-tag analysis presented above, however. Arrival time is either closely correlated with BON departure time – or uncorrelated (the peaks in the TDA arrival distribution).
+
+### ICE Detention Model 
+
+Of course, the CWR are not likely lined up geographically in order of “closing time”, and thus it might not be possible to assign a given arrival peak with a particular CWR. But complementary radio tag data might provide the correlation. The PIT-tag data is readily available with much larger sample sizes than practical with radio tags, and the confounding factor of fish distress after being cut open at the Bonneville AFF is avoided.
+
 
 
 
