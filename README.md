@@ -22,4 +22,4 @@ The two BON (Bonneville Dam) sites are starting points for the path between dams
 Daily measurements for Columbia River mainstem adult ladder fish counts, water flow, and temperature were obtained from University of Washington DART site (http://www.uw.dart.edu) which compiles data from the US Army Corps of Engineers and WA state public utility districts.
 Raw data was processed using the R programming language within the RStudio integrated development language, and this environment was also used to produce the graphics in this report.
 
-
+![2013 Steelhead](images/2013Steelhead.png)
