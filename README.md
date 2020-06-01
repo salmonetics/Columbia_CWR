@@ -22,4 +22,14 @@ The two BON (Bonneville Dam) sites are starting points for the path between dams
 Daily measurements for Columbia River mainstem adult ladder fish counts, water flow, and temperature were obtained from University of Washington DART site (http://www.uw.dart.edu) which compiles data from the US Army Corps of Engineers and WA state public utility districts.
 Raw data was processed using the R programming language within the RStudio integrated development language, and this environment was also used to produce the graphics in this report.
 
+## Results
+### Scatterplot+Histograms+Temperature of PIT-tag Detection Pairs
+
 ![2013 Steelhead](images/2013Steelhead.png)
+
+There are four components to the above chart:
+1. Scatterplot of detection datetime at Bonneville (the last adult detection at one of the BON adult sites) vs. the first detection datetime at The Dalles. The color encoding is red= “delayed” and blue=”not delayed”. This is a binary classification in which a threshold travel time between dams is chosen so as to This is arbitrary, but as you can observe in the above, is a reasonable choice. In any case, for the clearly delayed steelhead, there are rather interesting patterns in both the vertical and horizontal directions. This scatterplot doesn’t give a provide a clear assessment of the relative number of fish delayed, though, since a lot of blue dots might be overlapping near the apparent diagonal.
+1. At the top is a histogram of the detections, aggregated by date at (leaving) BON, with the same color encoding. This is of course the arrival rate, and the relative height of red to blue at a given day corresponds to the fraction which will take longer than tmax (or 4 days) to get to TDA
+1. On the left is the corresponding histogram for arrivals at The Dalles, rather different, and highly structured profile from the top. Clearly, many of the fish which depart Bonneville from July into August don’t arrive until September-October, but more interestingly, they arrive in bunches (OK, schools), with each group including fish with a large spread of travel times.
+1. Inset at the bottom is the forebay daily mean temperature at Bonneville (degrees C). This provides one measure of the reservoir temperature around the time that the fish finally arrive at TDA (as shown below). One could also use temperatures at TDA tailrace (or some average), but there is minimal difference between these. Also apparent is the temperatures at which the probability of delay becomes large.
+
