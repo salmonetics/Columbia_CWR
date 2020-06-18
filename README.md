@@ -71,9 +71,9 @@ There are four components to the above chart:
 
 ### Aggregate Delay and Loss
 
-![2013 Steelhead](images/Steelhead_Fate.png.png)
+![2013 Steelhead](images/Steelhead_Fate.png)
 
-![2013 Steelhead](images/FallChinook_Fate.png.png)
+![2013 Fall Chinook](images/FallChinook_Fate.png)
 
 ## Comparison with Adult Fish Ladder Visual Count at The Dalles Dam
 
