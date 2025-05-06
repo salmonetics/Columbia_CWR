@@ -7,6 +7,9 @@ This report is submitted as supplemental data and analysis for the EPA document 
 1. The time series of PIT-tag detections of steelhead at The Dalles Dam often indicate one or more narrow peaks in arrivals, and these fish have Bonneville departures distributed across the span of the delay period (#2, above). 
 1. In year 2013, for example, large numbers of steelhead, having departed Bonneville Dam over a span of two months, nonetheless ascended The Dalles Dam adult ladders on a single day (almost 10,000 on 9/8/2013).
 
+## Full EPA Report
+The full report is archived in the /epa folder in this repository.
+
 ## Methods
 PIT-tag detections for Chinook and Steelhead were obtained from the PTAGIS database (https://ptagis.org/). A query of type “Interrogation Summary” was created, which retrieves the first and last detections (timestamp) at each interrogation site. Other attributes output in the search results included unique tag (one for each fish), run (e.g. Summer, Fall…), rear-type (Natural Origin or Wild, Hatchery), release site (PTAGIS code, basin, subbasin) and species.
 This study was focused on adults migrating upstream between Bonneville and The Dalles dams on the Columbia River. The following interrogation sites were of most interest:
